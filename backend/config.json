@@ -1,0 +1,11 @@
+{
+  "placement_senders": [
+  "helpdesk.cdc@vit.ac.in",
+  "vitlions2026@vitbhopal.ac.in",
+  "placementoffice@vitbhopal.ac.in"
+],
+  "applied_companies": ["Arrise Solution", "Solarwinds", "7-Eleven"],
+  "thresholds": {"super": 0.85, "urgent": 0.65, "mid": 0.4, "low": 0.15},
+  "profile": {"degree": "BTech", "identifiers": ["Kislay", "Kislay Tiwari", "22BSA10205", "kislaytiwari2022@vitbhopal.ac.in"]},
+  "attachment_handling": "flag"
+}

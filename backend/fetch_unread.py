@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent
 def fetch_unread(max_results=20):
     creds = get_credentials()
     service = build("gmail", "v1", credentials=creds)
-    query = "is:unread -in:trash"
+    query = "is:unread -in:trash newer_than:1d"
     results = service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
     messages = results.get("messages", [])
     if not messages:
