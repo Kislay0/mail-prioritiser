@@ -1,11 +1,14 @@
 # backend/process_and_classify.py
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fetch_unread import fetch_unread
 from rules import explain
 from store_ids import load_ids, save_ids
+from llm_client import classify_with_llm
+from dotenv import load_dotenv
+load_dotenv()
 
 BASE = Path(__file__).resolve().parent
 PROCESSED_FILE = BASE / "processed_ids.json"
@@ -68,11 +71,22 @@ def main():
         score = explanation["score"]
         reasons = explanation.get("reasons", [])
         sender_email = explanation.get("sender_email", "")
+        
+        if explanation.get("is_placement_sender") and 0.45<=score<=0.85:
+            llm_res = classify_with_llm(mid, subject, snippet, max_tokens=500)
+            if llm_res:
+                llm_urgency = llm_res.get("urgency")
+                severity_order = {"super_urgent":4, "urgent":3, "mid":2, "low":1, "trash":0}
+                if llm_urgency in severity_order and severity_order.get(llm_urgency,0) > severity_order.get(label,0):
+                    label = llm_urgency
+                    reasons.append("llm_override: "+ (llm_res.get("reason") or ""))
+                else:
+                    reasons.append("llm_supplement: "+ (llm_res.get("reason") or ""))
 
         rec = {
             "id": mid,
             "threadId": m.get("threadId"),
-            "received_at": datetime.utcnow().isoformat() + "Z",
+            "received_at": datetime.now(timezone.utc).isoformat() + "Z",
             "subject": subject,
             "from": sender,
             "sender_email": sender_email,
