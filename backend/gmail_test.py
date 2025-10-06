@@ -18,31 +18,46 @@ SCOPES = [
 ]
 
 BASE_DIR = Path(__file__).resolve().parent
-CREDENTIALS_FILE = BASE_DIR / "credentials.json"
+# Allow overriding credentials path via env var if desired
+CREDENTIALS_FILE = Path(os.getenv("GOOGLE_CREDENTIALS", BASE_DIR / "credentials.json"))
 TOKEN_FILE = BASE_DIR / "token.json"
 
 
 def get_credentials():
     creds = None
-    if TOKEN_FILE.exists():
-        with open(TOKEN_FILE, "r", encoding="utf-8") as f:
-            token_data = json.load(f)
-        from google.oauth2.credentials import Credentials
-        creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+    token_path = TOKEN_FILE
 
+    # Load existing token if it exists
+    if os.path.exists(token_path):
+        try:
+            with open(token_path, "r") as token_file:
+                token_data = json.load(token_file)
+                creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        except Exception as e:
+            print("⚠️  Token file invalid or corrupted, will regenerate:", e)
+            creds = None
+
+    # If there are no valid credentials, or they’re expired, refresh or regenerate
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-            except google.auth.exceptions.RefreshError:
+                print("🔄 Token refreshed successfully.")
+            except Exception as e:
+                print("⚠️  Token refresh failed, regenerating via OAuth:", e)
                 creds = None
+
+        # If we still don't have valid creds, do full OAuth flow
         if not creds:
-            if not CREDENTIALS_FILE.exists():
-                raise FileNotFoundError(f"Missing {CREDENTIALS_FILE}. Put OAuth client JSON there.")
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
-            creds = flow.run_local_server(port=8080)
-        with open(TOKEN_FILE, "w", encoding="utf-8") as token:
-            token.write(creds.to_json())
+            creds = flow.run_local_server(port=8080, prompt="consent")
+            print("✅ New OAuth credentials obtained.")
+
+        # Save the credentials for the next run
+        with open(token_path, "w") as token_file:
+            token_file.write(creds.to_json())
+            print("💾 Token saved to token.json")
+
     return creds
 
 
