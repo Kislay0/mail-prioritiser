@@ -15,3 +15,4 @@ node_modules/
 
 # Clear cache
 backend/reset_test_data.py
+backend/llm_cache

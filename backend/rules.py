@@ -51,7 +51,7 @@ def contains_date_near(text: str) -> bool:
             return True
     return False
 
-def score_email(subject: str, body: str, sender_header: str, to_list: str, applied_companies: List[str]=None, placement_senders: List[str]=None) -> float:
+def score_email(subject: str, body: str, sender_header: str, to_list: str, applied_companies: List[str]=None, placement_senders: List[str]=None, super_keywords: List[str]=None, urgent_keywords: List[str]=None, mid_keywords: List[str]=None, trash_keywords: List[str]=None) -> float:
     """
     Compute a score [0,1] for emails that are already known to be from placement-senders.
     Non-placement senders should be handled by the caller (label 'others').
@@ -59,6 +59,13 @@ def score_email(subject: str, body: str, sender_header: str, to_list: str, appli
     score = 0.0
     text = ((subject or "") + " " + (body or "")).lower()
     sender_email = extract_email_from_header(sender_header)
+    
+    super_k = [k.lower() for k in (super_keywords or SUPER_KEYWORDS)]
+    urgent_k = [k.lower() for k in (urgent_keywords or URGENT_KEYWORDS)]
+    mid_k = [k.lower() for k in (mid_keywords or MID_KEYWORDS)]
+    trash_k = [k.lower() for k in (trash_keywords or TRASH_KEYWORDS)]
+    text = ((subject or "") + " " + (body or "")).lower()
+    
     # sender whitelist bonus (should be placement-senders)
     if placement_senders is None:
         placement_senders = DEFAULT_PLACEMENT_SENDERS
@@ -70,11 +77,11 @@ def score_email(subject: str, body: str, sender_header: str, to_list: str, appli
         score += 0.05
 
     # keyword boosts
-    if any(k in text for k in SUPER_KEYWORDS):
+    if any(k in text for k in super_k):
         score += 0.45
-    elif any(k in text for k in URGENT_KEYWORDS):
+    elif any(k in text for k in urgent_k):
         score += 0.25
-    elif any(k in text for k in MID_KEYWORDS):
+    elif any(k in text for k in mid_k):
         score += 0.15
 
     # date proximity
@@ -89,7 +96,7 @@ def score_email(subject: str, body: str, sender_header: str, to_list: str, appli
                 break
 
     # penalize clear trash (congratulatory)
-    if any(k in text for k in TRASH_KEYWORDS):
+    if any(k in text for k in trash_k):
         score -= 0.6
 
     # personalization bonus
@@ -111,7 +118,7 @@ def classify_from_score(score: float) -> str:
         return "low"
     return "trash"
 
-def explain(subject: str, body: str, sender_header: str, to_list: str, applied_companies: List[str]=None, placement_senders: List[str]=None) -> Dict[str, Any]:
+def explain(subject: str, body: str, sender_header: str, to_list: str, applied_companies: List[str]=None, placement_senders: List[str]=None, super_keywords: List[str]=None, urgent_keywords: List[str]=None, mid_keywords: List[str]=None, trash_keywords: List[str]=None) -> Dict[str, Any]:
     """
     Explain returns a dict with keys: score, label, reasons, sender_email, is_placement_sender.
     Caller should check is_placement_sender: if False, label will be 'others' and score will be 0.
@@ -143,18 +150,18 @@ def explain(subject: str, body: str, sender_header: str, to_list: str, applied_c
         }
 
     # compute score and label
-    s = score_email(subject, body, sender_header, to_list, applied_companies, placement_senders)
+    s = score_email(subject, body, sender_header, to_list, applied_companies, placement_senders, super_keywords, urgent_keywords, mid_keywords, trash_keywords)
     label = classify_from_score(s)
     reasons: List[str] = []
     text = ((subject or "") + " " + (body or "")).lower()
 
     if any(normalize_email(ps) == sender_email for ps in placement_senders_norm):
         reasons.append("sender is placement cell")
-    if any(k in text for k in SUPER_KEYWORDS):
+    if any(k in text for k in super_keywords):
         reasons.append("super keyword found")
-    elif any(k in text for k in URGENT_KEYWORDS):
+    elif any(k in text for k in urgent_keywords):
         reasons.append("urgent keyword found")
-    elif any(k in text for k in MID_KEYWORDS):
+    elif any(k in text for k in mid_keywords):
         reasons.append("mid keyword found")
     if contains_date_near(text):
         reasons.append("date/time mentioned")
@@ -163,7 +170,7 @@ def explain(subject: str, body: str, sender_header: str, to_list: str, applied_c
             if c and c.lower() in text:
                 reasons.append(f"applied-company match: {c}")
                 break
-    if any(k in text for k in TRASH_KEYWORDS):
+    if any(k in text for k in trash_keywords):
         reasons.append("congratulatory/trash keyword")
     if any(idf.lower() in text for idf in MY_IDENTIFIERS):
         reasons.append("personal identifier matched")

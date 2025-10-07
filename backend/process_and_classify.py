@@ -3,16 +3,18 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
-from fetch_unread import fetch_unread
-from rules import explain
-from store_ids import load_ids, save_ids
-from llm_client import classify_with_llm
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
+# Supabase helper functions
+from supabase_client import insert_email_record, fetch_processed_ids, fetch_companies_for_user, fetch_keywords_for_user
+
+from fetch_unread import fetch_unread
+from rules import explain
+from llm_client import classify_with_llm
+
 BASE = Path(__file__).resolve().parent
-PROCESSED_FILE = BASE / "processed_ids.json"
-OUT_FILE = BASE / "classified_emails.json"
 CONFIG_FILE = BASE / "config.json"
 
 def load_config():
@@ -32,23 +34,27 @@ def load_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def persist_classified(record):
-    records = []
-    if OUT_FILE.exists():
-        try:
-            with open(OUT_FILE, "r", encoding="utf-8") as f:
-                records = json.load(f)
-        except Exception:
-            records = []
-    records.insert(0, record)  # newest first
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(records, f, indent=2, default=str)
-
 def main():
     cfg = load_config()
+    # load dynamic lists from Supabase (fallback to config if empty)
+    USER_ID = os.getenv("SUPABASE_USER_ID")
+    if not USER_ID:
+        raise RuntimeError("SUPABASE_USER_ID not set in .env")
+
     placement_senders = cfg.get("placement_senders", [])
-    applied_companies = cfg.get("applied_companies", [])
-    processed = load_ids()
+    # fetch companies and keywords from supabase
+    applied_companies = fetch_companies_for_user(USER_ID) or cfg.get("applied_companies", [])
+    keyword_rows = fetch_keywords_for_user(USER_ID) or []
+    # build keyword lists for the rules engine
+    # We'll map keywords into categories: super, urgent, mid, trash, default -> low
+    SUPER_KEYWORDS = [r["keyword"] for r in keyword_rows if r.get("type") == "super"]
+    URGENT_KEYWORDS = [r["keyword"] for r in keyword_rows if r.get("type") == "urgent"]
+    MID_KEYWORDS = [r["keyword"] for r in keyword_rows if r.get("type") == "mid"]
+    TRASH_KEYWORDS = [r["keyword"] for r in keyword_rows if r.get("type") == "trash"]
+    # fallback: if any empty, keep from config defaults in rules (rules.py has defaults)
+    # fetch already-processed gmail_ids from Supabase for this user (avoid reprocessing)
+    processed_list = fetch_processed_ids(USER_ID)
+    processed = set(processed_list or [])
     # print("Loaded config:", CONFIG_FILE)
     msgs = fetch_unread(max_results=50)
     if not msgs:
@@ -66,7 +72,15 @@ def main():
         sender = m.get("from", "")
         to_list = ""  # placeholder; can be improved later
 
-        explanation = explain(subject, snippet, sender, to_list, applied_companies, placement_senders)
+        explanation = explain(
+            subject, snippet, sender, to_list,
+            applied_companies,
+            placement_senders,
+            super_keywords=SUPER_KEYWORDS,
+            urgent_keywords=URGENT_KEYWORDS,
+            mid_keywords=MID_KEYWORDS,
+            trash_keywords=TRASH_KEYWORDS
+        )
         label = explanation["label"]
         score = explanation["score"]
         reasons = explanation.get("reasons", [])
@@ -105,15 +119,31 @@ def main():
         print(f"Message ID: {mid}")
         print("------------------------------------------------------------\n")
 
-        # Persist record and mark processed
-        persist_classified(rec)
+        # Persist to Supabase
+        # Build DB-ready payload (column names match the emails table)
+        db_record = {
+            "user_id": USER_ID,
+            "gmail_id": mid,
+            "thread_id": m.get("threadId"),
+            "from_address": sender,
+            "subject": subject,
+            "snippet": snippet,
+            "category": label,
+            "score": score,
+            "reasons": reasons,
+            "llm_used": bool('llm_res' in locals() and llm_res),
+            # store llm result as JSON/string for audit; the supabase client will accept dicts
+            "llm_notes": llm_res if ('llm_res' in locals() and isinstance(llm_res, dict)) else None,
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        resp = insert_email_record(db_record)
+        # if insert succeeded, mark as processed locally (so we don't re-attempt same insert this run)
         newly_processed.add(mid)
 
-    # merge and save processed ids
+    # We already inserted new records into Supabase; just report how many
     if newly_processed:
-        processed.update(newly_processed)
-        save_ids(processed)
-        print(f"Processed and saved {len(newly_processed)} messages.")
+        print(f"Processed and saved {len(newly_processed)} messages to Supabase.")
     else:
         print("No new messages were processed.")
 
