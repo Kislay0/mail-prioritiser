@@ -11,3 +11,7 @@ backend/.env
 credentials.json
 # Node
 node_modules/
+
+
+# Clear cache
+backend/reset_test_data.py
