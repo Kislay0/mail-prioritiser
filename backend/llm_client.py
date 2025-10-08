@@ -1,6 +1,6 @@
 # llm_client.py
 """
-LLM fallback client (OpenAI). Modular so you can swap providers.
+LLM fallback client (Gemini-only). Modular so you can swap providers later.
 Usage:
     from llm_client import classify_with_llm
     res = classify_with_llm(message_id, subject, snippet, max_tokens=500)
@@ -12,15 +12,9 @@ import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-# We use the 'openai' package if available. If you prefer a different SDK, replace this section.
-try:
-    import openai
-except Exception:
-    openai = None
-    
 import google.generativeai as genai
-
 from dotenv import load_dotenv
+
 load_dotenv()
 
 CACHE_DIR = Path(__file__).resolve().parent / "llm_cache"
@@ -63,6 +57,7 @@ Now analyze this message and return ONLY the JSON:
 Subject: {subject}
 Body: {snippet}
 """
+
 def _cache_path(message_id: str) -> Path:
     return CACHE_DIR / f"{message_id}.json"
 
@@ -87,25 +82,55 @@ def validate_llm_output(obj: Dict[str, Any]) -> bool:
     # sanity checks
     if obj.get("urgency") not in {"super_urgent","urgent","mid","low","trash"}:
         return False
+    if obj.get("category") not in {"interview","job_posting","follow_up","congrats","other"}:
+        return False
+    if obj.get("action_required") not in {"none","reply","register","fill_form","confirm_attendance"}:
+        return False
     if not isinstance(obj.get("companies", []), list):
+        return False
+    # deadline should be either None or a string (further validation can be added)
+    d = obj.get("deadline")
+    if d is not None and not isinstance(d, str):
         return False
     return True
 
-def _call_openai(prompt: str, max_tokens: int = 300, provider: str = "auto") -> str:
+def _call_gemini(prompt: str, max_tokens: int = 300) -> str:
     """
-    Try OpenAI first (if key & quota available). Fallback to Gemini automatically on quota/other errors.
+    Call Google Gemini via google.generativeai. Expects GEMINI_API_KEY set in env.
+    Uses GEMINI_MODEL env var or defaults to "gemini-2.5-flash".
+    Attempts a couple of response shapes for compatibility across SDK versions.
+    Returns the textual output (raw) from Gemini.
+    Raises RuntimeError on fatal failure.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
     gemini_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        raise RuntimeError("Gemini API key missing; set GEMINI_API_KEY in .env or environment")
 
-    def call_gemini():
-        if not gemini_key:
-            raise RuntimeError("Gemini API key missing; set GEMINI_API_KEY in .env")
-        genai.configure(api_key=gemini_key)
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    genai.configure(api_key=gemini_key)
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    # Primary attempt: modern Model.generate (preferred)
+    try:
+        model = genai.Model(model_name)
+        # Note: different SDK versions use slightly different method signatures.
+        # We pass a simple generate call and handle various possible response shapes.
+        resp = model.generate(prompt=prompt, max_output_tokens=max_tokens)
+        # Try to extract textual content from common fields
+        if hasattr(resp, "candidates") and resp.candidates:
+            c = resp.candidates[0]
+            if hasattr(c, "content") and c.content:
+                return c.content.strip()
+            if isinstance(c, dict) and "content" in c and c["content"]:
+                return str(c["content"]).strip()
+        if hasattr(resp, "output") and resp.output:
+            return str(resp.output).strip()
+        # fallback to string form
+        return str(resp).strip()
+    except Exception as e_primary:
+        # Secondary attempt: older 'GenerativeModel' or different client shapes
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
+            model_alt = genai.GenerativeModel(model_name)
+            response = model_alt.generate_content(prompt)
             if hasattr(response, "text") and response.text:
                 return response.text.strip()
             if hasattr(response, "candidates") and response.candidates:
@@ -113,65 +138,12 @@ def _call_openai(prompt: str, max_tokens: int = 300, provider: str = "auto") -> 
                 if hasattr(cand, "content") and cand.content:
                     return cand.content.strip()
                 if isinstance(cand, dict):
-                    for k in ("content", "output"):
+                    for k in ("content", "output", "text"):
                         if k in cand and cand[k]:
                             return str(cand[k]).strip()
             return str(response).strip()
-        except Exception as e:
-            try:
-                model = genai.Model(model_name)
-                resp = model.generate(prompt= prompt)
-                if hasattr(resp, "candidates") and resp.candidates:
-                    c = resp.candidates[0]
-                    if hasattr(c, "content") and c.content:
-                        return c.content.strip()
-                    if isinstance(c, dict) and "content" in c:
-                        return c["content"].strip()
-                if hasattr(resp, "output") and resp.output:
-                    return str(resp.output).strip()
-                return str(resp).strip()
-            except Exception as e2:
-                raise RuntimeError(f"Gemini call failed: {e} / {e2}")
-
-    # force-Gemini or no OpenAI key
-    if provider == "gemini" or not api_key:
-        return call_gemini()
-
-    # otherwise try OpenAI first
-    try:
-        from openai import OpenAI as OpenAIClient
-        client = OpenAIClient(api_key=api_key)
-
-        kwargs = {
-            "model": "gpt-5-nano",
-            "messages": [{"role": "user", "content": prompt}],
-        }
-
-        try:
-            resp = client.chat.completions.create(**kwargs, max_completion_tokens=max_tokens)
-        except Exception as e:
-            msg = str(e).lower()
-            # if quota or temperature errors etc, switch
-            if "insufficient_quota" in msg or "429" in msg or "quota" in msg:
-                print("⚠️  OpenAI quota exceeded — using Gemini fallback.")
-                return call_gemini()
-            if "max_completion_tokens" in msg or "unsupported parameter" in msg:
-                resp = client.chat.completions.create(**kwargs, max_tokens=max_tokens)
-            else:
-                raise
-
-        choice = resp.choices[0]
-        msg = getattr(choice, "message", None)
-        if hasattr(msg, "content"):
-            return msg.content.strip()
-        elif isinstance(msg, dict) and "content" in msg:
-            return msg["content"].strip()
-        else:
-            return str(msg).strip()
-
-    except Exception as e:
-        print(f"⚠️  OpenAI call failed ({e}); switching to Gemini.")
-        return call_gemini()
+        except Exception as e_alt:
+            raise RuntimeError(f"Gemini call failed: primary error: {e_primary}; secondary error: {e_alt}")
 
 def classify_with_llm(message_id: str, subject: str, snippet: str, max_tokens: int=500, force: bool=False) -> Optional[Dict[str, Any]]:
     """
@@ -189,7 +161,7 @@ def classify_with_llm(message_id: str, subject: str, snippet: str, max_tokens: i
 
     # first call
     try:
-        raw = _call_openai(prompt, max_tokens=max_tokens)
+        raw = _call_gemini(prompt, max_tokens=max_tokens)
     except Exception as e:
         print("LLM error:", e)
         return None
@@ -230,7 +202,7 @@ def classify_with_llm(message_id: str, subject: str, snippet: str, max_tokens: i
     )
 
     try:
-        raw2 = _call_openai(repair_prompt, max_tokens=min(200, max_tokens))
+        raw2 = _call_gemini(repair_prompt, max_tokens=min(200, max_tokens))
     except Exception as e:
         # Save second failure raw if any
         try:

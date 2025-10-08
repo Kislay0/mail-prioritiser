@@ -1,0 +1,53 @@
+name: Daily Digest & Cleanup
+
+on:
+  schedule:
+    - cron: '0 16 * * *'   # daily at 16:00 UTC = 21:30 IST
+  workflow_dispatch: {}
+
+jobs:
+  daily-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Create venv & install deps
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Write Google credentials & token (from base64)
+        env:
+          GCREDS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
+          GTOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+        run: |
+          mkdir -p backend
+          echo "$GCREDS_B64" | base64 --decode > backend/credentials.json
+          echo "$GTOKEN_B64" | base64 --decode > backend/token.json
+          chmod 600 backend/credentials.json backend/token.json
+
+      - name: Create backend .env
+        run: |
+          cat > backend/.env <<EOF
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_USER_ID=${{ secrets.SUPABASE_USER_ID }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          EOF
+
+      - name: Run daily digest & cleanup
+        run: |
+          . .venv/bin/activate
+          # mark this run as digest for your Python code if needed
+          export DIGEST=true
+          python backend/process_and_classify.py
+          # run the cleanup helper
+          python backend/delete_old.py

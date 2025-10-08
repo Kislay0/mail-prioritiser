@@ -1,6 +1,7 @@
 from supabase import create_client
 import os
 from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
 
 load_dotenv()
 
@@ -86,4 +87,37 @@ def delete_keyword(user_id: str, keyword: str):
         return resp
     except Exception as e:
         print("⚠️ delete_keyword failed:", e)
+        return None
+
+def fetch_unread_db_emails_for_user(user_id: str):
+    """Return list of DB email rows where is_read is false."""
+    try:
+        resp = supabase.table("emails").select("*").eq("user_id", user_id).eq("is_read", False).execute()
+        return resp.data or []
+    except Exception as e:
+        print("⚠️ fetch_unread_db_emails_for_user error:", e)
+        return []
+
+def mark_email_read(user_id: str, gmail_id: str):
+    """Set is_read = true for a single gmail_id."""
+    try:
+        resp = supabase.table("emails").update({"is_read": True, "processed_at": "now()"}).eq("user_id", user_id).eq("gmail_id", gmail_id).execute()
+        return resp
+    except Exception as e:
+        print("⚠️ mark_email_read error:", e)
+        return None
+
+def delete_emails_older_than(user_id: str, days: int = 2):
+    """
+    Delete emails for a user whose received_at is older than `days`.
+    Uses an ISO8601 cutoff which is compatible with supabase-py .lt() filtering.
+    """
+    try:
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_iso = cutoff_dt.isoformat()
+        resp = supabase.table("emails").delete().eq("user_id", user_id).lt("received_at", cutoff_iso).execute()
+        print(f"🗑️ Deleted emails older than {days} days (cutoff {cutoff_iso}) for user {user_id}")
+        return resp
+    except Exception as e:
+        print("⚠️ delete_emails_older_than failed:", e)
         return None

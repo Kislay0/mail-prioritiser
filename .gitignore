@@ -5,7 +5,9 @@ __pycache__/
 *.pyc
 # Secrets and tokens
 backend/credentials.json
+backend/cred_b64.txt
 backend/token.json
+backend/token_b64.txt
 backend/.env
 .env
 credentials.json

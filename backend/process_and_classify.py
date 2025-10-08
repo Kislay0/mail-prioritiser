@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import os
+IS_DIGEST = os.getenv("DIGEST", "false").lower() in ("1","true","yes")
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -13,6 +14,7 @@ from supabase_client import insert_email_record, fetch_processed_ids, fetch_comp
 from fetch_unread import fetch_unread
 from rules import explain
 from llm_client import classify_with_llm
+from sync_read import sync_read_status_for_user
 
 BASE = Path(__file__).resolve().parent
 CONFIG_FILE = BASE / "config.json"
@@ -146,6 +148,9 @@ def main():
         print(f"Processed and saved {len(newly_processed)} messages to Supabase.")
     else:
         print("No new messages were processed.")
+
+    # Keep Supabase read status in sync with Gmail
+    sync_read_status_for_user(USER_ID)
 
 if __name__ == "__main__":
     main()

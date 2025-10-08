@@ -1,0 +1,49 @@
+name: Hourly Mail Sync
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour, on the hour
+  workflow_dispatch: {}
+
+jobs:
+  hourly-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Create venv & install deps
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Write Google credentials & token (from base64)
+        env:
+          GCREDS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
+          GTOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+        run: |
+          mkdir -p backend
+          echo "$GCREDS_B64" | base64 --decode > backend/credentials.json
+          echo "$GTOKEN_B64" | base64 --decode > backend/token.json
+          chmod 600 backend/credentials.json backend/token.json
+
+      - name: Create backend .env
+        run: |
+          cat > backend/.env <<EOF
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_USER_ID=${{ secrets.SUPABASE_USER_ID }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          EOF
+
+      - name: Run hourly sync
+        run: |
+          . .venv/bin/activate
+          python backend/process_and_classify.py

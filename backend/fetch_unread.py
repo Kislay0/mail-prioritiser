@@ -30,12 +30,12 @@ def fetch_unread(max_results=20):
             "from": from_,
             "snippet": snippet,
         })
-    print(f"Found {len(out)} unread messages (showing up to {max_results}):\n")
-    for i, e in enumerate(out, 1):
-        print(f"{i}. {e['subject']}")
-        print(f"   From: {e['from']}")
-        print(f"   id: {e['id']}  threadId: {e['threadId']}")
-        print(f"   snippet: {e['snippet']}\n")
+    # print(f"Found {len(out)} unread messages (showing up to {max_results}):\n")
+    # for i, e in enumerate(out, 1):
+    #     print(f"{i}. {e['subject']}")
+    #     print(f"   From: {e['from']}")
+    #     print(f"   id: {e['id']}  threadId: {e['threadId']}")
+    #     print(f"   snippet: {e['snippet']}\n")
     return out
 
 if __name__ == "__main__":

@@ -32,7 +32,8 @@ def get_credentials():
         try:
             with open(token_path, "r") as token_file:
                 token_data = json.load(token_file)
-                creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
         except Exception as e:
             print("⚠️  Token file invalid or corrupted, will regenerate:", e)
             creds = None
@@ -70,6 +71,19 @@ def list_labels():
     for label in labels:
         print(f"- {label['name']} (id: {label['id']})")
 
+def message_is_unread(service, gmail_id: str) -> bool:
+    """
+    Returns True if message has 'UNREAD' label, False otherwise.
+    Uses users().messages().get with metadata (cheap).
+    """
+    try:
+        msg = service.users().messages().get(userId="me", id=gmail_id, format="metadata", metadataHeaders=[]).execute()
+        labels = msg.get("labelIds", [])
+        return "UNREAD" in labels
+    except Exception as e:
+        print(f"⚠️ Error checking unread status for {gmail_id}: {e}")
+        # If error, default to True (safer) or False depending on preference.
+        return True
 
 if __name__ == "__main__":
     try:
