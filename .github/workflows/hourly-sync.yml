@@ -1,8 +1,8 @@
 name: Hourly Mail Sync
 
 on:
-  schedule:
-    - cron: '0 * * * *'   # every hour, on the hour
+  # schedule:
+  #   - cron: '0 * * * *'   # every hour, on the hour
   workflow_dispatch: {}
 
 jobs:

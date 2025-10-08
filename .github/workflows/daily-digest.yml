@@ -1,8 +1,8 @@
 name: Daily Digest & Cleanup
 
 on:
-  schedule:
-    - cron: '0 16 * * *'   # daily at 16:00 UTC = 21:30 IST
+#   schedule:
+#     - cron: '0 16 * * *'   # daily at 16:00 UTC = 21:30 IST
   workflow_dispatch: {}
 
 jobs:
